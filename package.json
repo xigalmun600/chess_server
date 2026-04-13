@@ -1,5 +1,6 @@
 {
   "name": "chess_server",
+  "type": "module",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -17,5 +18,9 @@
   "dependencies": {
     "chess.js": "^1.4.0",
     "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/ws": "^8.18.1"
   }
 }
