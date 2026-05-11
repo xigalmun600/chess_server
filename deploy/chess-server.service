@@ -1,0 +1,18 @@
+[Unit]
+Description=chess-server WebSocket backend (via Nix)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=neonchess
+Group=neonchess
+WorkingDirectory=/srv/chess-server
+ExecStart=/usr/bin/nix develop --command node --experimental-strip-types src/index.ts
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
