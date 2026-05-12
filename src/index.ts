@@ -29,6 +29,7 @@ type Room = {
   whiteName: string;
   blackName: string;
   chess: Chess;
+  drawOfferedBy: "white" | "black" | null;
 };
 
 const wss = new WebSocketServer({
@@ -68,6 +69,7 @@ function pairing(player: WS): void {
     whiteName: white.username!,
     blackName: black.username!,
     chess: new Chess(),
+    drawOfferedBy: null,
   });
 
   white.send(
@@ -88,6 +90,26 @@ function endReasonFromChess(chess: Chess): EndReason | null {
   return null;
 }
 
+function endGame(
+  roomId: UUID,
+  room: Room,
+  result: Result,
+  reason: EndReason,
+): void {
+  for (const sock of [room.white, room.black]) {
+    if (sock.readyState === sock.OPEN) {
+      sock.send(JSON.stringify({ type: "game_over", result, reason }));
+    }
+  }
+  Rooms.delete(roomId);
+  void persistResult({
+    whiteId: room.whiteId,
+    blackId: room.blackId,
+    result,
+    endReason: reason,
+  });
+}
+
 function handleMove(
   player: WS,
   from: string,
@@ -103,6 +125,13 @@ function handleMove(
   const opposite = player.color === "white" ? room.black : room.white;
   opposite.send(JSON.stringify({ type: "move", from, to, promotion }));
 
+  if (room.drawOfferedBy === player.color) {
+    room.drawOfferedBy = null;
+    if (opposite.readyState === opposite.OPEN) {
+      opposite.send(JSON.stringify({ type: "draw_withdrawn" }));
+    }
+  }
+
   const reason = endReasonFromChess(room.chess);
   if (!reason) return;
 
@@ -113,19 +142,47 @@ function handleMove(
     result = "draw";
   }
 
-  for (const sock of [room.white, room.black]) {
-    if (sock.readyState === sock.OPEN) {
-      sock.send(JSON.stringify({ type: "game_over", result, reason }));
-    }
-  }
+  endGame(player.roomId!, room, result, reason);
+}
 
-  Rooms.delete(player.roomId!);
-  void persistResult({
-    whiteId: room.whiteId,
-    blackId: room.blackId,
-    result,
-    endReason: reason,
-  });
+function handleResign(player: WS): void {
+  if (!player.roomId) return;
+  const room = Rooms.get(player.roomId);
+  if (!room) return;
+  const result: Result = player.color === "white" ? "black" : "white";
+  endGame(player.roomId, room, result, "resign");
+}
+
+function handleDrawOffer(player: WS): void {
+  if (!player.roomId) return;
+  const room = Rooms.get(player.roomId);
+  if (!room) return;
+  if (room.drawOfferedBy) return;
+  room.drawOfferedBy = player.color!;
+  const opposite = player.color === "white" ? room.black : room.white;
+  if (opposite.readyState === opposite.OPEN) {
+    opposite.send(JSON.stringify({ type: "draw_offered" }));
+  }
+}
+
+function handleDrawAccept(player: WS): void {
+  if (!player.roomId) return;
+  const room = Rooms.get(player.roomId);
+  if (!room) return;
+  if (!room.drawOfferedBy || room.drawOfferedBy === player.color) return;
+  endGame(player.roomId, room, "draw", "agreement");
+}
+
+function handleDrawDecline(player: WS): void {
+  if (!player.roomId) return;
+  const room = Rooms.get(player.roomId);
+  if (!room) return;
+  if (!room.drawOfferedBy || room.drawOfferedBy === player.color) return;
+  room.drawOfferedBy = null;
+  const opposite = player.color === "white" ? room.black : room.white;
+  if (opposite.readyState === opposite.OPEN) {
+    opposite.send(JSON.stringify({ type: "draw_declined" }));
+  }
 }
 
 function handleChat(player: WS, text: unknown): void {
@@ -222,6 +279,18 @@ wss.on("connection", async (player: WS, req: IncomingMessage) => {
         break;
       case "chat":
         handleChat(player, message.text);
+        break;
+      case "resign":
+        handleResign(player);
+        break;
+      case "draw_offer":
+        handleDrawOffer(player);
+        break;
+      case "draw_accept":
+        handleDrawAccept(player);
+        break;
+      case "draw_decline":
+        handleDrawDecline(player);
         break;
       default:
         console.warn("unknown request", message.type);

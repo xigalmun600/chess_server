@@ -12,6 +12,7 @@ export type EndReason =
   | "insufficient"
   | "fifty_move"
   | "resign"
+  | "agreement"
   | "timeout"
   | "disconnect";
 
