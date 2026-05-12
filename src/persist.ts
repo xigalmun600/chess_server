@@ -16,6 +16,26 @@ export type EndReason =
   | "timeout"
   | "disconnect";
 
+export async function fetchFriendIds(userId: number): Promise<number[]> {
+  try {
+    const res = await fetch(
+      `${SVELTEKIT_INTERNAL_URL}/api/internal/friends?userId=${userId}`,
+      {
+        headers: { "x-internal-secret": INTERNAL_API_SECRET! },
+      },
+    );
+    if (!res.ok) {
+      console.error("fetchFriendIds: SvelteKit returned", res.status);
+      return [];
+    }
+    const body = (await res.json()) as { ids?: number[] };
+    return Array.isArray(body.ids) ? body.ids : [];
+  } catch (err) {
+    console.error("fetchFriendIds: fetch failed", err);
+    return [];
+  }
+}
+
 export async function persistResult(args: {
   whiteId: number;
   blackId: number;
