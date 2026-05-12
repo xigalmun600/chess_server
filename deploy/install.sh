@@ -23,8 +23,11 @@ systemctl enable chess-server
 
 echo
 echo "Done. Next steps if this is a first install:"
-echo "  sudo systemctl start chess-server"
-echo "  sudo systemctl status chess-server"
+echo "  1. Create /etc/chess-server.env with:"
+echo "       INTERNAL_API_SECRET=<same value as /etc/neon-chess.env>"
+echo "       SVELTEKIT_INTERNAL_URL=http://127.0.0.1:3000"
+echo "  2. sudo systemctl start chess-server"
+echo "  3. sudo systemctl status chess-server"
 echo
 echo "Sudoers rule for the deploy user (one-time, manual):"
 echo "  sudo visudo -f /etc/sudoers.d/neonchess"

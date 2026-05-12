@@ -8,6 +8,7 @@ Type=simple
 User=neonchess
 Group=neonchess
 WorkingDirectory=/srv/chess-server
+EnvironmentFile=/etc/chess-server.env
 ExecStart=/usr/bin/nix develop --command node --experimental-strip-types src/index.ts
 Restart=on-failure
 RestartSec=3
