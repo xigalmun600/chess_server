@@ -7,13 +7,17 @@ import { verifyTicket } from "./db.ts";
 import { persistResult, type EndReason, type Result } from "./persist.ts";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const CHAT_MIN_INTERVAL_MS = 200;
+const CHAT_MAX_LENGTH = 200;
 
 declare module "ws" {
   interface WebSocket {
     color?: "white" | "black";
     roomId?: UUID;
     userId?: number;
+    username?: string;
     isAlive?: boolean;
+    lastChatAt?: number;
   }
 }
 
@@ -22,6 +26,8 @@ type Room = {
   black: WS;
   whiteId: number;
   blackId: number;
+  whiteName: string;
+  blackName: string;
   chess: Chess;
 };
 
@@ -59,11 +65,17 @@ function pairing(player: WS): void {
     black,
     whiteId: white.userId!,
     blackId: black.userId!,
+    whiteName: white.username!,
+    blackName: black.username!,
     chess: new Chess(),
   });
 
-  white.send(JSON.stringify({ type: "match", color: "white" }));
-  black.send(JSON.stringify({ type: "match", color: "black" }));
+  white.send(
+    JSON.stringify({ type: "match", color: "white", opponent: black.username }),
+  );
+  black.send(
+    JSON.stringify({ type: "match", color: "black", opponent: white.username }),
+  );
 }
 
 function endReasonFromChess(chess: Chess): EndReason | null {
@@ -116,6 +128,32 @@ function handleMove(
   });
 }
 
+function handleChat(player: WS, text: unknown): void {
+  if (typeof text !== "string") return;
+  const trimmed = text.trim();
+  if (trimmed.length === 0 || trimmed.length > CHAT_MAX_LENGTH) {
+    console.warn("chat rejected: length", trimmed.length);
+    return;
+  }
+  const now = Date.now();
+  if (player.lastChatAt && now - player.lastChatAt < CHAT_MIN_INTERVAL_MS) {
+    console.warn("chat rejected: rate limit");
+    return;
+  }
+  player.lastChatAt = now;
+
+  if (!player.roomId) return;
+  const room = Rooms.get(player.roomId);
+  if (!room) return;
+
+  const opponent = player.color === "white" ? room.black : room.white;
+  if (opponent.readyState === opponent.OPEN) {
+    opponent.send(
+      JSON.stringify({ type: "chat", from: player.color, text: trimmed }),
+    );
+  }
+}
+
 function handleDisconnect(player: WS): void {
   const queueIdx = queue.indexOf(player);
   if (queueIdx !== -1) queue.splice(queueIdx, 1);
@@ -153,19 +191,20 @@ wss.on("connection", async (player: WS, req: IncomingMessage) => {
     return;
   }
 
-  const userId = verifyTicket(ticket);
-  if (!userId) {
+  const verified = verifyTicket(ticket);
+  if (!verified) {
     player.close(4001, "unauthorized");
     return;
   }
 
-  player.userId = userId;
+  player.userId = verified.userId;
+  player.username = verified.username;
   player.isAlive = true;
   player.on("pong", () => {
     player.isAlive = true;
   });
 
-  console.log(`client connected (userId=${userId})`);
+  console.log(`client connected (userId=${verified.userId}, username=${verified.username})`);
 
   player.on("message", (data) => {
     let message: any;
@@ -181,13 +220,16 @@ wss.on("connection", async (player: WS, req: IncomingMessage) => {
       case "move":
         handleMove(player, message.from, message.to, message.promotion);
         break;
+      case "chat":
+        handleChat(player, message.text);
+        break;
       default:
         console.warn("unknown request", message.type);
     }
   });
 
   player.on("close", () => {
-    console.log(`client disconnected (userId=${userId})`);
+    console.log(`client disconnected (userId=${verified.userId})`);
     handleDisconnect(player);
   });
 });
