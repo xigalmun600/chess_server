@@ -4,10 +4,13 @@ import { randomInt, randomUUID, type UUID } from "crypto";
 const wss = new WebSocketServer({ port: 8080, maxPayload: 1024 * 10 });
 const queue: WS[] = [];
 
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
 declare module 'ws' {
   interface WebSocket {
     color?: "white" | "black";
     roomId?: UUID;
+    isAlive?: boolean;
   }
 }
 
@@ -43,8 +46,25 @@ let handleMove = (player: WS, from: string, to: string) => {
   opposite.send(JSON.stringify({ type: "move", from, to }));
 }
 
+let handleDisconnect = (player: WS) => {
+  const queueIdx = queue.indexOf(player);
+  if (queueIdx !== -1) queue.splice(queueIdx, 1);
+
+  if (!player.roomId) return;
+  const room = Rooms.get(player.roomId);
+  if (!room) return;
+
+  const opponent = player.color === "white" ? room.black : room.white;
+  if (opponent.readyState === opponent.OPEN) {
+    opponent.send(JSON.stringify({ type: "opponent_left" }));
+  }
+  Rooms.delete(player.roomId);
+}
+
 wss.on("connection", (player: WS) => {
   console.log("client connected");
+  player.isAlive = true;
+  player.on("pong", () => { player.isAlive = true; });
 
   player.on("message", (data) => {
     let message = JSON.parse(data.toString());
@@ -62,5 +82,20 @@ wss.on("connection", (player: WS) => {
 
   player.on("close", () => {
     console.log("client disconnected");
+    handleDisconnect(player);
   });
 });
+
+const heartbeat = setInterval(() => {
+  for (const player of wss.clients as Set<WS>) {
+    if (player.isAlive === false) {
+      console.log("terminating dead client");
+      player.terminate();
+      continue;
+    }
+    player.isAlive = false;
+    player.ping();
+  }
+}, HEARTBEAT_INTERVAL_MS);
+
+wss.on("close", () => clearInterval(heartbeat));
