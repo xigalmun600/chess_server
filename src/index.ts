@@ -6,7 +6,6 @@ import { createServer, type IncomingMessage } from "http";
 import { verifyTicket } from "./db.ts";
 import {
   persistResult,
-  fetchFriendIds,
   type EndReason,
   type Result,
 } from "./persist.ts";
@@ -28,7 +27,6 @@ declare module "ws" {
     username?: string;
     isAlive?: boolean;
     lastChatAt?: number;
-    friendIds?: number[];
   }
 }
 
@@ -268,14 +266,7 @@ async function handleInvite(player: WS, toUserId: unknown): Promise<void> {
   }
   if (!Connections.has(toUserId)) {
     player.send(
-      JSON.stringify({ type: "invite_error", reason: "offline" }),
-    );
-    return;
-  }
-  const friends = player.friendIds ?? [];
-  if (!friends.includes(toUserId)) {
-    player.send(
-      JSON.stringify({ type: "invite_error", reason: "not_friends" }),
+      JSON.stringify({ type: "invite_error", reason: "user_offline" }),
     );
     return;
   }
@@ -435,26 +426,7 @@ wss.on("connection", async (player: WS, req: IncomingMessage) => {
     player.isAlive = true;
   });
 
-  const friendIds = await fetchFriendIds(verified.userId);
-  player.friendIds = friendIds;
-  const firstConnection = addConnection(player);
-
-  // tell newcomer which friends are currently online
-  const onlineFriendIds = friendIds.filter((id) => Connections.has(id));
-  player.send(
-    JSON.stringify({ type: "friends_online", ids: onlineFriendIds }),
-  );
-
-  // notify each online friend that this user just came online
-  if (firstConnection) {
-    for (const fid of friendIds) {
-      sendTo(fid, {
-        type: "friend_online",
-        userId: verified.userId,
-        username: verified.username,
-      });
-    }
-  }
+  addConnection(player);
 
   console.log(`client connected (userId=${verified.userId}, username=${verified.username})`);
 
@@ -508,12 +480,6 @@ wss.on("connection", async (player: WS, req: IncomingMessage) => {
     console.log(`client disconnected (userId=${verified.userId})`);
     const lastConnection = removeConnection(player);
     if (lastConnection) {
-      for (const fid of friendIds) {
-        sendTo(fid, {
-          type: "friend_offline",
-          userId: verified.userId,
-        });
-      }
       // drop any outgoing invites this user had
       for (const [id, inv] of Invites) {
         if (inv.fromId === verified.userId) {
